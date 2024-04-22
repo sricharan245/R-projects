@@ -1,0 +1,280 @@
+---
+title: "What is the price of a House in the King County?"
+author: 
+  - Sri Charan Bodduna
+output:
+  slidy_presentation: default
+  ioslides_presentation: default
+  beamer_presentation: default
+---
+
+# Introduction
+  - We are going analyze King County data using multiple linear regression and find the best model with suitable explanatory variables and understand various performance parameters of the model. 
+  - We will perform preliminary steps like data cleaning and exploration of the dataset.
+  - We will using Linear Regression models from TidyVerse package in R
+  - At the end, we are going to predict the price of the house for a given house characteristics.
+
+
+# Problem Statement
+
+1. What is the relationship between the living area (sqft_living) and the price of the house?
+2. Does the number of floors have a significant effect on the house price?
+3. What are the important variable that explains price of the house?
+
+Assumptions
+
+  - There is a linear relationship between explanatory and target variable
+  - The errors follow the normal distribution
+  - No multicollinearity
+
+
+# Data Understanding
+
+1. The King County Housing Dataset contains information on the sales prices and characteristics of homes in Seattle and King County, Washington, from May 2014 to 2015. 
+2. The data set includes many different variables such as sales price, number of bedrooms, number of bathrooms, size of living space in square feet, land area in square feet, number of floors, waterfront indicator, view index, condition of the house, level, square feet above ground, square feet below ground, year of construction, year of renovation, zip code, latitude, and longitude. 
+3. The data set includes 21,613 observations and 21 variables. It can be used for a variety of analytics, including predicting real estate prices using regression methods.
+4. Additionally, the Health and Housing Data Dashboard powered by King County provides comprehensive and summarized health and housing reports, including resident data from housing authorities. 
+
+
+
+
+
+# Import Libraries
+```{r}
+if (!require("ggplot2")) install.packages("ggplot2")
+library("ggplot2")
+if (!require("devtools")) install.packages("devtools")
+library("devtools")
+if (!require("tidyr")) install.packages("tidyr")
+library("tidyr")
+if (!require("dplyr")) install.packages("dplyr")
+library("dplyr")
+if (!require("gtsummary")) install.packages("gtsummary")
+library("gtsummary")
+if (!require("skimr")) install.packages("skimr")
+library('skimr')
+if (!require("broom")) install.packages("broom")
+library("broom")
+if (!require("GGally")) install.packages("GGally")
+library(GGally)
+if (!require("ggfortify")) install.packages("ggfortify")
+library(ggfortify)
+if (!require("car")) install.packages("car")
+library(car)
+```
+
+
+# Data loading
+```{r}
+kc_house_data <- read.csv("kc_house_data.csv")
+
+names(kc_house_data)
+```
+
+# Data cleaning
+``` {r}
+kc_house_data <- kc_house_data[-c(1,2 )]
+
+# select(df, "price", "sqft_living","sqft_lot", "sqft_above", "sqft_basement", "sqft_living15","sqft_lot15")
+
+kc_house_data <- filter(kc_house_data, zipcode == 98103)
+
+
+
+```
+
+
+
+
+# Data preprocessing
+```{r}
+is.na(kc_house_data) %>% colSums()
+# colSums(kc_house_data)
+kc_house_data <- kc_house_data[!duplicated(kc_house_data),]
+```
+
+# Subsets predictors
+```{r}
+
+kc_house_data %>% skim()
+```
+
+
+
+
+# EDA (1)
+
+```{r}
+str(kc_house_data)
+
+```
+
+# EDA
+```{r}
+
+ggplot(kc_house_data, aes(price)) +
+  geom_histogram(fill="#1b98e0") +
+  ggtitle("histogram chart on Price")
+```
+
+# Exploratory Data Analysis
+``` {r}
+ggplot(kc_house_data, aes(x = (sqft_living), y = price)) +
+  geom_point(color="#1b98e0") +
+  geom_smooth(method = 'lm', se=FALSE) +
+  ggtitle("Scatterplot on price vs. sqft_living")
+```
+
+# EDA
+``` {r}
+ggplot(kc_house_data, aes(x = floors, y = price)) +
+  geom_point(color="#1b98e0")+
+  ggtitle("Scatterplot on price vs floors")
+
+```
+
+# EDA
+``` {r}
+ggplot(kc_house_data, aes(x = grade, y = price)) +
+  geom_point(color="#1b98e0") +
+  ggtitle("Scatterplot on price vs grade")
+```
+
+# EDA
+
+``` {r}
+ggplot(kc_house_data, aes(x = condition, y = price)) +
+  geom_point(color="#1b98e0") +
+  ggtitle("Scatterplot on price vs condition")
+```
+
+# EDA
+
+``` {r}
+ggpairs(select(kc_house_data, "price", "sqft_living","sqft_lot", "sqft_above", "sqft_basement", "sqft_living15","sqft_lot15")) +
+  ggtitle("Scatterplot matrix on numeric columns")
+
+```
+
+# modeling(1) 
+## Model with all variables   
+``` {r}
+
+mdl_all <- lm(price ~  ., kc_house_data)
+
+summary(mdl_all)
+```
+
+# Model Validation(1) 
+## Model with all variables
+
+```{r}
+
+autoplot(mdl_all, which=1, nrow=1, ncol= 1)
+autoplot(mdl_all, which=2, nrow=1, ncol= 1)
+autoplot(mdl_all, which=3, nrow=1, ncol= 1)
+
+# autoplot(m1, which=1, nrow=1, ncol= 1)
+
+```
+
+
+# Modeling(2) - stepwise model with important variables
+``` {r}
+############
+
+intercept_only <- lm(price ~ 1, data=kc_house_data)
+all <- lm(price ~ ., data=kc_house_data)
+
+both <- step(intercept_only, direction='both', scope=formula(all), trace=0)
+both$anova
+
+(both$coefficients)
+
+mdl_imp_vars <- lm(log(price) ~  (sqft_living) + lat+sqft_lot15+grade+floors+
+         sqft_above+sqft_living15+condition+yr_renovated+sqft_lot + view, kc_house_data)
+summary(mdl_imp_vars)
+
+```
+
+# Model Validation (2)
+## Stepwise model with important variables
+```{r}
+
+autoplot(mdl_imp_vars, which=1, nrow=1, ncol= 1)
+autoplot(mdl_imp_vars, which=2, nrow=1, ncol= 1)
+autoplot(mdl_imp_vars, which=3, nrow=1, ncol= 1)
+
+
+```
+
+# Modeling(3)
+## Model with minimum variables
+``` {r}
+mdl_min_vars <- lm(price ~  sqft_living+ floors + grade + condition + sqft_above +
+         sqft_living15 + yr_renovated, kc_house_data)
+summary(mdl_min_vars)
+car::vif(mdl_min_vars)
+```
+
+# Model validation (3) 
+## Model with minimum variables
+```{r}
+
+autoplot(mdl_min_vars, which=1, nrow=1, ncol= 1)
+autoplot(mdl_min_vars, which=2, nrow=1, ncol= 1)
+autoplot(mdl_min_vars, which=3, nrow=1, ncol= 1)
+
+
+```
+
+
+# Modeling(4) 
+## Model with interactions
+``` {r}
+mdl_min_vars_inter <- lm((price) ~ sqft_above + condition + sqft_living15 +yr_renovated+ sqft_living:floors
+         + sqft_living:grade, kc_house_data)
+summary(mdl_min_vars_inter)
+
+car::vif(mdl_min_vars_inter)
+
+```
+
+# Model validation(4)
+## Model with interactions
+```{r}
+
+autoplot(mdl_min_vars_inter, which=1, nrow=1, ncol= 1)
+autoplot(mdl_min_vars_inter, which=2, nrow=1, ncol= 1)
+autoplot(mdl_min_vars_inter, which=3, nrow=1, ncol= 1)
+
+
+```
+
+
+# Prediction of House price
+```{r}
+
+explantory_vars <- tibble(
+  sqft_living = 1700,
+  sqft_above = 1400,
+  sqft_living15 = 1500,
+  condition = 3,
+  floors= 1.5,
+  grade = 7,
+  yr_renovated = 0
+)
+
+house_price_pred <- predict(mdl_min_vars_inter, explantory_vars)
+sprintf("Predicted price of the house is %s", house_price_pred)
+```
+
+
+# Conclusions
+  
+1. We have performed multiple linear regression model on Kings County dataset. We have predicted the prices of houses in city of Seattle (zipcode: 98103).
+2. we have observed there is postively linear relationship between square foot of living area and price
+3. we have understood that number of floors have significant impact in determining the house price
+4. We found out that the significant variables are sqft_living, floors, grade, sqft_living15
+5. We saw residual plot which shown us that residuals have scattered randomly and oscillated around 0.
+6. We also seen Q-Q plot, which explains residuals are normally distributed to certain extent. We can further optimize the model for better performance.
