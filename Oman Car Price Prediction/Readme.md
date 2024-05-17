@@ -1,4 +1,4 @@
-A Predictive Journey into Oman Car Prices
+**A Predictive Journey into Oman Car Prices**
 
 Purpose:
 This project deals about predicting the price of the Cars in country Oman with the help of statistical modeling and machine learning models using R language. Further, I will compare each model candidates and assess their results and performance to finalize best and appropriate model for the this dataset.
