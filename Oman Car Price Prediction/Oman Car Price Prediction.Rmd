@@ -1,0 +1,828 @@
+---
+title: "A Predictive Journey into Oman Car Prices"
+
+author: 
+  - Sri Charan Bodduna 
+
+output: html_document
+date: "2024-05-08"
+
+---
+# Introduction
+  1. Oman is one of the countries which has a very dynamic market especially related to the automotives. 
+  2. The rise in demand for vehicles is seen due to multiple factors like increase in the population, increase in the per capita income, change in the preferences and needs of customers which lead to increase in the opportunities for manufacturers and dealers. 
+  3. Oman’s automotive market also noticed a significant surge in automotives post pandemic. It is also expected to witness a huge growth trajectory in the market betIen 2023 and 2030 (Ltd, n.d.). 
+  4. Our aim is to build a model to predict the prices of cars and to predict the best-selling car.
+
+# Assumptions
+1. I considered data of cars which manufactured later than 2015.
+2. Filtered the data where price is greater than 5000 due to wider distribution in the price leading to greater variance.
+
+# Data Understanding
+•	The dataset that I chose from Kaggle is about the car prices in Oman in the year 2023. 
+•	This data consists of 16,898 entries with 19 columns. This dataset gives a brief idea of the market trends.
+•	 It contains columns related to the car brand, model, manufacturing year, color, regional specifications, transmission types, type of fuel used, exterior colors, mileage, type of paint, condition, body condition, licensing, insurance, payment methods for purchase, adjusted price, cities, neighborhoods and exterior and interior options.
+•	I perform data cleaning and I do exploratory data analysis on this dataset to build our model.
+
+
+# Import Libraries
+Importing libraries
+```{r}
+if (!require("ggplot2")) install.packages("ggplot2")
+library("ggplot2")
+if (!require("devtools")) install.packages("devtools")
+library("devtools")
+if (!require("tidyr")) install.packages("tidyr")
+library("tidyr")
+if (!require("dplyr")) install.packages("dplyr")
+library("dplyr")
+if (!require("gtsummary")) install.packages("gtsummary")
+library("gtsummary")
+if (!require("skimr")) install.packages("skimr")
+library('skimr')
+if (!require("broom")) install.packages("broom")
+library("broom")
+if (!require("GGally")) install.packages("GGally")
+library(GGally)
+if (!require("ggfortify")) install.packages("ggfortify")
+library(ggfortify)
+```
+
+
+# Data loading
+Loading Oman car 2023 data
+```{r}
+df <- read.csv("oman_car_prices_2023.csv")
+
+str(df)
+```
+
+
+
+# Data Cleaning
+Checking for nulls
+```{r}
+
+is.na(df) %>% colSums()
+```
+
+```{r}
+ # Find the indices of rows where Year is 'Older than 1970'
+rows_to_drop <- which(df$Year == 'Older than 1970')
+
+# Drop the rows
+df <- df[-rows_to_drop, ]
+
+
+
+# Convert Year column to integer type
+df$Year <- as.integer(df$Year)
+
+# Count the number of rows where Year is greater than or equal to 2000
+count <- sum(df$Year >= 2015)
+
+# Subset the dataframe to keep only rows where Year is greater than or equal to 2000
+df <- subset(df, Year >= 2015)
+
+# Print the number of rows and columns in the filtered dataframe
+cat(dim(df))
+
+
+```
+``` {r}
+df <- df %>%
+  select(-c("Car.License", "Neighborhood", "Exterior.Options", "Interior.Options"))
+
+head(df)
+```
+
+Filtering the data whose car price is greater than 5000 to shorten the range of prices in the dataset. Using complete data is has range from USD 378 to USD 129k. 
+```{r}
+df <- subset(df, adjusted_price >= 5000)
+```
+
+Here, I am cleaning the Kilometers and Condition variables. I see that some data has Condition=New but Kilometers range is more than 50K. Which I felt there is no meaning to it. Hence I cleaned those data points.
+```{r}
+# Find the indices of rows where Condition is "New" but Kilometers are not zero
+df$Kilometers <- as.factor(df$Kilometers)
+
+# Update 'Condition' to "Used" where 'Condition' is "New" and 'Kilometers' is not "1 - 999" or "0"
+df <- df %>%
+  mutate(Condition = ifelse(Condition == "New" & !(Kilometers %in% c("1 - 999", "0")), "Used", Condition))
+
+# Print the updated data frame and its shape
+print(dim(df))
+```
+Converted the data type of kilometer from string to integer and taken the mean of loIr and upper boundry of the kilometer.
+``` {r}
+# get loIr and upper bounds of each range
+library(stringr)
+df$Kilometers <- gsub(",", "", df$Kilometers)
+df <- df %>%
+  mutate(LoIr = as.numeric(str_extract(Kilometers, "\\d+(?= - )")),
+         Upper = as.numeric(str_extract(Kilometers, "(?<=- )\\d+")))
+
+# Calculate the mean of the ranges
+df <- df %>%
+  mutate(Mean_Kilometers = ifelse(is.na(Upper), LoIr, ceiling((LoIr + Upper) / 2)))
+
+df <- df %>%
+  select(-c("Kilometers","LoIr", "Upper"))
+
+df[is.na(df)] <- 0
+
+# Display the result
+head(df)
+```
+
+
+#Data Prep
+Created the new feature ("Luxury_Car") to classify the luxury car brands.
+
+```{r}
+premium_car_brands <- c(
+    'Lexus', 'Mercedes Benz', 'BMW', 'Audi', 'Jaguar', 'Porsche', 
+    'Infiniti', 'Maserati', 'Bentley', 'Alfa Romeo',"Tesla", 'Hongqi', 'Haval', 'Maxus', 'GAC', 'GMC',
+    'Rolls Royce', 'Land Rover', 'Cadillac', 'Ferrari', 'Lamborghini', 'Changan', "Volvo"
+)
+
+# Create a new column 'Luxury_Car' (1 for luxury car, 0 for non-luxury car)
+df <- df %>%
+  mutate(Luxury_Car = ifelse(Car.Make %in% premium_car_brands, 1, 0))
+
+
+# Calculate fleet size for each car make
+fleet <- df %>%
+  group_by(Car.Make) %>%
+  summarize(Fleet_Size = n())
+
+# Merge fleet size back to the original data frame
+df <- df %>%
+  left_join(fleet, by = 'Car.Make')
+
+
+
+df <- df %>%
+  select(-c("Car.Make", "Model"))
+
+
+head(df)
+
+
+```
+
+Removed the outlier from the target variable
+```{r removing outliers}
+# Calculate quartiles and IQR
+
+# Create the boxplot
+ggplot(df, aes(x = "", y = adjusted_price)) +
+  geom_boxplot() +
+  labs(y = "Adjusted Price") +
+  theme_minimal() +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+q1 <- quantile(df$adjusted_price, 0.25)
+q3 <- quantile(df$adjusted_price, 0.75)
+IQR <- q3 - q1
+
+# Calculate loIr and upper bounds for outliers
+min_ <- q1 - (1.5 * IQR)
+max_ <- q3 + (1.5 * IQR)
+
+# Remove outliers
+new_df <- df[df$adjusted_price > min_ & df$adjusted_price < max_, ]
+
+print(dim(new_df))
+
+
+
+
+summary(new_df$adjusted_price)
+```
+
+Created the mapping function for the car Body.Condition
+``` {r}
+
+# Define mapping dictionary
+replace_mapping <- c(
+  "Other",
+  "Poor (severe body damages)",
+  "Fair (body needs work)",
+  "Good (body only has minor blemishes)",
+  "Excellent with no defects"
+)
+
+new_df$Body.Condition <- factor(new_df$Body.Condition, levels = replace_mapping, labels = c(0, 1, 2, 3, 4))
+
+
+head(new_df)
+
+```
+
+
+# Exploratory Data Analysis
+Created box plot between Fuel and price
+Fuel_Electric has wide range of prices, I can only use single category during analysis
+```{r}
+ggplot(new_df, aes(x = Fuel, y = adjusted_price)) +
+  geom_boxplot(fill="#1b98e0") +
+  labs(title = "Distribution of Car Fuel Type")
+```
+Created box plot between Fuel and price
+Fuel_Electric has wide range of prices, I can only use single category during analysis
+```{r}
+
+ggplot(new_df, aes(x = Fuel, y = adjusted_price)) +
+  geom_boxplot(fill="#1b98e0") +
+  labs(title = "Distribution of Car Fuel Type")
+```
+
+Created box plot between Car Regional Specs and Price
+GCC has wide range of prices, I can only use single category during analysis
+```{r}
+ggplot(new_df, aes(x = Regional.Specs, y = adjusted_price)) +
+  geom_boxplot(fill="#1b98e0") +
+  labs(title = "Distribution of Car Fuel Type")
+```
+
+
+Created box plot between Fuel and price
+Manual Transmission has wide range of prices, I can only use single category during analysis
+```{r}
+
+ggplot(new_df, aes(x = Transmission, y = adjusted_price)) +
+  geom_boxplot(fill="#1b98e0") +
+  labs(title = "Distribution of Car Fuel Type")
+```
+Created box plot betIen Fuel and price
+Body Condition 4 has wide range of prices, I can only use single category during analysis
+```{r}
+
+ggplot(new_df, aes(x = Body.Condition, y = adjusted_price)) +
+  geom_boxplot(fill="#1b98e0") +
+  labs(title = "Distribution of Car Fuel Type")
+```
+
+Created box plot between Fuel and price
+Original Paint & Total Repaint has wide range of prices, I can only use single category during analysis
+```{r}
+
+ggplot(new_df, aes(x = Paint, y = adjusted_price)) +
+  geom_boxplot(fill="#1b98e0") +
+  labs(title = "Distribution of Car Fuel Type")
+```
+
+Created box plot between Fuel and price
+I have diversified price ranges betIen 2 categories of Luxury car 
+```{r}
+ggplot(new_df, aes(x = as.factor(Luxury_Car), y = adjusted_price)) +
+  geom_boxplot(fill="#1b98e0") +
+  labs(title = "Distribution of Luxury Car")
+```
+Avg. Price change over Years
+```{r}
+new_df %>%
+  group_by(Year) %>%
+  summarize(mean_adjusted_price = mean(adjusted_price)) %>%
+  ggplot(aes(x = Year, y = mean_adjusted_price)) +
+  geom_line() +
+  labs(title = "Mean Adjusted Price by Year")
+
+```
+Price vs. Year
+```{r}
+# Scatter plot
+ggplot(new_df, aes(x = Year, y = adjusted_price)) +
+  geom_point() +
+  labs(x = "Year", y = "Adjusted Price") +
+  ggtitle("Scatter Plot of Year vs Adjusted Price")
+
+```
+Mean_Kilometers vs Price
+```{r}
+
+
+# Scatter plot
+ggplot(new_df, aes(x = Mean_Kilometers, y = adjusted_price)) +
+  geom_point() +
+  labs(x = "Mean Kilometers", y = "Adjusted Price") +
+  ggtitle("Scatter Plot of Mean Kilometers vs Adjusted Price")
+
+```
+Fleet_Size vs Price
+
+```{r}
+
+
+# Scatter plot
+ggplot(new_df, aes(x = Fleet_Size, y = adjusted_price)) +
+  geom_point() +
+  labs(x = "Mean Kilometers", y = "Adjusted Price") +
+  ggtitle("Scatter Plot of Mean Kilometers vs Adjusted Price")
+
+```
+
+Histogram on Price
+```{r}
+
+# Create the histogram
+ggplot(new_df, aes(x = adjusted_price)) +
+  geom_histogram(bins = 20, fill = "#1b98e0", color = "black") +
+  labs(x = "adjusted_price", y = "Frequency", title = "Histogram of adjusted_price")
+```
+
+Using the scatter plot understood the relation between numeric data
+```{r}
+
+ggpairs(dplyr::select(new_df, "adjusted_price", "Year","Mean_Kilometers", "Fleet_Size")) +
+  ggtitle("Scatterplot matrix on numeric columns")
+```
+Removed the color attribute from the data
+```{r}
+
+new_df <- new_df %>%
+  select(-c("Color"))
+
+head(new_df)
+```
+
+Converted the categorical data with the dummy variables
+```{r}
+
+# Specify categorical columns
+cat_cols <- c("Regional.Specs", "Transmission", "Fuel", "Paint", "Condition", "Fleet_Size", 
+              "City", "Insurance", "Payment.Method")
+
+# Create dummy variables
+dummies <- model.matrix(~ . - 1, data = new_df[cat_cols])
+
+# Convert the resulting matrix to a data frame
+d_df <- as.data.frame(dummies)
+
+head(d_df)
+```
+Combined the original data with the categorical and dummy values
+```{r}
+# Combine original dataframe without categorical columns and dummy variables
+processed_df <- cbind(
+  new_df[, !(names(new_df) %in% cat_cols)],
+  d_df
+)
+
+# Print the processed dataframe
+ names(processed_df)
+
+
+```
+
+```{r}
+# Rename the columns with no spaces
+colnames(processed_df) <- c("Year", "Body.Condition", "adjusted_price", "Mean_Kilometers", "Luxury_Car", 
+                   "Regional.Specs_AmericanSpecs", "Regional.Specs_EuropeanSpecs", "Regional.Specs_GCCSpecs", 
+                   "Regional.Specs_JapaneseSpecs", "Regional.Specs_OtherSpecs", "Transmission_Manual", 
+                   "Fuel_Electric", "Fuel_Gasoline", "Fuel_Hybrid", "Fuel_MildHybrid", "Fuel_Plug-inHybrid", 
+                   "Paint_Other", "Paint_Partiallyrepainted", "Paint_Totalrepaint", "Condition_Used", 
+                   "Fleet_Size", "City_AlDakhiliya", "City_AlDhahirah", "City_AlSharqiya", "City_AlWustaa", "City_Dhofar",
+                   "City_Buraimi",  "City_Musandam", "City_Muscat", "Insurance_CompulsoryInsurance", 
+                   "Insurance_NotInsured", "PaymentMethod_CashorInstallments", "PaymentMethod_InstallmentsOnly")
+# 
+# Print the column names after renaming
+(colnames(processed_df))
+
+```
+Filter the final dataset for modeling by filtering the features
+``` {r}
+# Define columns to keep
+cols_to_keep <- c('Year', 'adjusted_price', 'Mean_Kilometers',"Regional.Specs_AmericanSpecs","Regional.Specs_JapaneseSpecs", "Regional.Specs_GCCSpecs",
+               "Transmission_Manual", "Fuel_Gasoline", "Fuel_Hybrid", "Fuel_Electric",
+               "Paint_Totalrepaint",  "Body.Condition",
+                 "Luxury_Car",  "Fleet_Size", 
+                'PaymentMethod_CashorInstallments', 'PaymentMethod_InstallmentsOnly',
+                'City_Musandam', 'City_Muscat','City_AlWustaa',
+                "Insurance_CompulsoryInsurance", 'Insurance_NotInsured')
+# 
+# Subset the dataframe
+processed_df_subset <- processed_df[, cols_to_keep]
+
+# Print the subsetted dataframe
+print(dim(processed_df_subset))
+head((processed_df_subset))
+```
+
+
+```{r}
+dim(processed_df_subset)
+```
+
+Split the data with the 60% as training, 20% as validation, and 20% for testing
+```{r}
+tvid<-sample(nrow(processed_df_subset), ceiling(nrow(processed_df_subset)*0.6))
+mytrain<-processed_df_subset[tvid,]
+mytest_val<-processed_df_subset[-tvid,]
+
+vid<-sample(nrow(mytest_val), ceiling(nrow(mytest_val)*0.5))
+
+mytest<-mytest_val[vid,]
+myval<-mytest_val[-vid,]
+head(mytrain)
+```
+
+
+
+# Data Modeling
+
+After data pre-processing and EDA, I started with modeling using machine learning models by using statistical learning techniques. 
+As there are many categorical variables in the dataset, I addressed modeling with linear regression and non-parametric machine learning models. I have built 5 models in total.
+During modeling, I have used Mean Squared Error metric to compare models in this analysis.
+
+Models created:
+ 1. Multiple Linear Regression (All Variables)
+ 2. Multiple Linear Regression (Forward Stepwise)
+ 3. Decision Tree Regressor
+ 4. Artificial Neural Network
+ 5. KNN
+
+I started with Linear regression model with all variables in it. I can see the developed model below. 
+
+RSquared achieved -  0.4301 (43%)
+Train MSE - 33460671.692449
+Test MSE - 36871038.218541
+
+```{r MLR - all variables}
+
+lm.allvars.fit1 = lm( adjusted_price ~ Year  +Mean_Kilometers+Regional.Specs_AmericanSpecs+Regional.Specs_JapaneseSpecs+Regional.Specs_GCCSpecs+Transmission_Manual+Fuel_Gasoline+Fuel_Hybrid+Fuel_Electric+Paint_Totalrepaint+Body.Condition+Luxury_Car+Fleet_Size+PaymentMethod_CashorInstallments+PaymentMethod_InstallmentsOnly+City_Musandam+City_AlWustaa+City_Muscat+Insurance_CompulsoryInsurance+Insurance_NotInsured, data= mytrain)
+
+print(summary(lm.allvars.fit1))
+
+
+lm.train.preds <- (predict(lm.allvars.fit1, newdata = mytrain))
+lm.fw.train.MSE <- mean((lm.train.preds-mytrain$adjusted_price)^2)
+print(paste("Train MSE", lm.fw.train.MSE))
+
+lm.test.preds <- (predict(lm.allvars.fit1, newdata = mytest))
+lm.fw.test.MSE <- mean((lm.test.preds-mytest$adjusted_price)^2)
+print(paste("TEST MSE", lm.fw.test.MSE))
+
+autoplot(lm.allvars.fit1, which=1, nrow=1, ncol= 1)
+autoplot(lm.allvars.fit1, which=2, nrow=1, ncol= 1)
+autoplot(lm.allvars.fit1, which=3, nrow=1, ncol= 1)
+
+```
+Linear regression model with transformed Year and Mean_Kilometers
+
+From the residual plots, the mean residuals have moved nearer to zero but Q-Q plot shown bad results.
+
+```{r}
+lm.allvars.fit = lm( adjusted_price ~  I( log(Year) + Year^2 + Mean_Kilometers^2) +Regional.Specs_AmericanSpecs+Regional.Specs_JapaneseSpecs+Regional.Specs_GCCSpecs+Transmission_Manual+Fuel_Gasoline+Fuel_Hybrid+Fuel_Electric+Paint_Totalrepaint+Body.Condition+Luxury_Car+Fleet_Size+PaymentMethod_CashorInstallments+PaymentMethod_InstallmentsOnly+City_Musandam+City_AlWustaa+City_Muscat+Insurance_CompulsoryInsurance+Insurance_NotInsured, data= mytrain)
+
+print(summary(lm.allvars.fit))
+
+autoplot(lm.allvars.fit, which=1, nrow=1, ncol= 1)
+autoplot(lm.allvars.fit, which=2, nrow=1, ncol= 1)
+autoplot(lm.allvars.fit, which=3, nrow=1, ncol= 1)
+
+lm.train.preds <- (predict(lm.allvars.fit, newdata = mytrain))
+lm.fw.train.MSE <- mean((lm.train.preds-mytrain$adjusted_price)^2)
+print(paste("Train MSE", lm.fw.train.MSE))
+
+lm.test.preds <- (predict(lm.allvars.fit, newdata = mytest))
+lm.fw.test.MSE <- mean((lm.test.preds-mytest$adjusted_price)^2)
+print(paste("TEST MSE", lm.fw.test.MSE))
+
+```
+
+
+Later, I modeling Forward stepwise multiple linear regression. As there are many explanatory variables in the previous model, I wanted to reduces the features without losing the model response. Hence I run the forward stepwise model below.
+
+RSquared -  0.43 (43%)
+Train MSE - 33469287.547
+TEST MSE - 36907041.534
+
+```{r MLR - FW Stepwise}
+fullmodel<-lm(adjusted_price~.,data= mytrain)
+my_intercept<-lm(adjusted_price~1, data=mytrain)
+lm.forward.fit<-step(my_intercept, direction='forward', scope=formula(fullmodel), trace=0)
+summary(lm.forward.fit)
+
+
+fw_selected = names(coef(lm.forward.fit)[-1])
+
+lm.train.preds <- (predict(lm.forward.fit, newdata = mytrain))
+print(paste("Train MSE", mean((lm.train.preds-mytrain$adjusted_price)^2)))
+
+```
+
+
+# Ridge regression
+
+When I look at the above models I can see that test MSE is more than train MSE, which means there is a degree of overfitting problem. Hence I need to address it. I have used regularization (Ridge regression) to tackle it. I have run the model using cross validation to identify optimal lambda. 
+
+I tried to perform Lasso Regression as Ill, hoIver the results are not convincing. So, I used through Ridge regression.
+
+Optimal Lambda - 366.9
+Train MSE - 33540464.176
+Test MSE - 36978495.368
+
+From the results, I see that the results are similar to the previous Linear regression. Due to this data I did not identify any improvement in the model to overcome overfitting.
+
+```{r}
+set.seed(5555)
+library(glmnet)
+library(MASS)
+
+Xs_design<-model.matrix(~ ., dplyr::select(mytrain, select=-c(adjusted_price)))[, -1]
+Xs_test_design<-model.matrix(~ ., dplyr::select(mytest, select=-c(adjusted_price)))[, -1]
+Xs_val_design<-model.matrix(~ ., dplyr::select(myval, select=-c(adjusted_price)))[, -1]
+
+ridgeCV<-cv.glmnet(x=Xs_design, y=mytrain$adjusted_price, family='gaussian', type.measure="mse", alpha=0, nfolds=10)
+
+print(ridgeCV)
+ridge_pred<-predict(ridgeCV,s='lambda.min',newx=Xs_design)
+print(paste("Train MSE: ", mean((ridge_pred-mytrain$adjusted_price)^2)))
+
+
+
+```
+
+# Decision Tree Reg
+To check the performance using non-parametric models, I implemented Decision Tree Regressor from the library rpart. I have tuned the decision tree model using minsplit and minbucket. I can see that the best model for this dataset is found to be minsplit=2, minbucket=4, gini index split.
+
+Train MSE - 33940941.674
+
+```{r}
+set.seed(5555) 
+
+library(rpart)
+library(rpart.plot)
+
+
+dt.allvars.fit<-rpart(adjusted_price~., data =
+            mytrain,parms=list(split="gini"),control=rpart.control(minsplit=2,minbucket=4))
+print(summary(dt.allvars.fit))
+
+rpart.plot(dt.allvars.fit, box.palette = "Blues", shadow.col = "gray", nn = TRUE, extra = 'auto')
+
+
+dt_pred_train<-predict(dt.allvars.fit,s='lambda.min',newx=mytrain)
+print(paste("Train MSE: ",mean((dt_pred_train-mytrain$adjusted_price)^2)))
+
+
+
+
+
+```
+
+# ANN Modeling
+
+To see the response of ANN model using this data, I performed ANN modeling using NeuralNet. I first started with scaling the train, test and validation data using PreProcess()
+
+
+```{r}
+library(caret)
+head(mytrain)
+
+scaling_mytrain <- preProcess(dplyr::select(mytrain, -c('adjusted_price')), method = c("center", "scale"))
+scaled_mytrain <- predict(scaling_mytrain, 
+                           newdata = dplyr::select(mytrain, -c("adjusted_price")))
+
+
+scaled_mytrain <- cbind(scaled_mytrain, dplyr::select(mytrain, c("adjusted_price")))
+
+
+scaling_mytest <- preProcess(dplyr::select(mytest, -c("adjusted_price")), method = c("center", "scale"))
+scaled_mytest <- predict(scaling_mytest, 
+                           newdata = dplyr::select(mytest, -c("adjusted_price")))
+
+
+scaled_mytest <- cbind(scaled_mytest, dplyr::select(mytest, c("adjusted_price")))
+
+
+scaling_myval <- preProcess(dplyr::select(myval, -c("adjusted_price")), method = c("center", "scale"))
+scaled_myval <- predict(scaling_myval, 
+                           newdata = dplyr::select(myval, -c("adjusted_price")))
+
+
+scaled_myval <- cbind(scaled_myval, dplyr::select(myval, c("adjusted_price")))
+
+dim(scaled_mytrain)
+head(scaled_mytrain)
+```
+
+I built a feed forward neural network which contains 3 hidden layers with 7, 5 and 3 nodes respectively. I have used learning rate and threshold as 0.01. I have also used logistic activation function but I also tried to run sigmoid and Softmax activation functions but I could not run the model.
+
+I can see the network graph image below
+
+
+```{r}
+if (!require(neuralnet))
+{install.packages(neuralnet)
+  }
+library(neuralnet)
+
+# softplus<-function(x) {log(1+exp(x))}
+sigmoid<-function(x) {1/(1+exp(-x))}
+set.seed(5555)
+
+scaled_mytrain_design<-model.matrix(~ ., data = scaled_mytrain)[, -1]
+scaled_mytest_design<-model.matrix(~ ., data = scaled_mytest)[, -1]
+scaled_myval_design<-model.matrix(~ ., data = scaled_myval)[, -1]
+# Xs_test_design<-model.matrix(~ ., dplyr::select(mytest, select=-c(adjusted_price)))[, -1]
+
+train_ann<-neuralnet(adjusted_price~., data=scaled_mytrain_design, hidden=c(7,5,3),rep=3,linear.output=TRUE,algorithm='rprop+',learningrate=.01, act.fct='logistic', stepmax=1e+06, lifesign='minimal',threshold=0.01)
+
+plot(train_ann, rep="best",show.Iights =TRUE,fontsize = 10)
+
+
+
+ann.train.preds<-predict(train_ann, scaled_mytrain_design)
+print(paste("Train MSE", mean((ann.train.preds-scaled_mytrain$adjusted_price)^2)))
+
+
+
+
+```
+
+
+#KNN
+Finally, I also developed the model using KNN. I have used K-fold cross validation technique with 5 folds to get optimal k value for the data. Using that I built KNN model. I even tried using LooCV cross validation but the model runs infinite time.
+
+I can see the results of the model.
+
+Optimal K = 5
+Train MSE - 25927190.361 
+This is the least MSE I found out compared to training data. In the next section I will use test data to evaluate the model candidates.
+
+```{r}
+library(caret)
+
+# Define the training control
+train_control <- trainControl(method = "cv", number = 5)
+
+# Train the KNN model
+knn_model <- train(adjusted_price ~ ., data = mytrain, method = "knn", trControl = train_control, tuneLength = 10)
+
+# Print the model
+print((knn_model))
+
+# Make predictions
+
+predictions <- predict(knn_model, newdata = mytrain)
+mse <- mean((predictions - mytrain$adjusted_price)^2)
+print(paste("Train MSE", mse))
+
+
+
+
+```
+
+
+
+
+# Model Selection/Validation
+
+I again begin with Linear regression. I have evaluated the model using residual plots as Ill.
+
+From the residual vs. Fitted values plot, I can see that the variance is not constant. I can also see that mean of residuals is not zero. Q-Q plot also moves out of reference line. Which means the model is violating assumptions.
+
+I tried to perform transformation on the explanatory variables like Year, Mean_Kilometers, and Fleet_Size by log square and sqrt transformation  but it did not give us much improvement in the model.
+
+Test MSE - 36871038.216
+
+```{r MLR - All variables}
+lm.test.preds <- (predict(lm.allvars.fit1, newdata = mytest))
+lm.fw.test.MSE <- mean((lm.test.preds-mytest$adjusted_price)^2)
+print(paste("TEST MSE", lm.fw.test.MSE))
+# lm.test.preds <- (predict(lm.allvars.fit, newdata = myval))
+# print(paste("TEST MSE", mean((lm.test.preds-myval$adjusted_price)^2)))
+
+
+autoplot(lm.allvars.fit1, which=1, nrow=1, ncol= 1)
+autoplot(lm.allvars.fit1, which=2, nrow=1, ncol= 1)
+autoplot(lm.allvars.fit1, which=3, nrow=1, ncol= 1)
+
+```
+In the Forward stepwise results on the basis of test data. I can see the residual plots. Again, the residual analysis is not aligned with linear regression assumptions.
+
+Test MSE - 36907041.534
+```{r MLR - Forward Stepwise}
+
+lm.test.preds <- (predict(lm.forward.fit, newdata = mytest))
+print(paste("TEST MSE: ", mean((lm.test.preds-mytest$adjusted_price)^2)))
+
+# lm.val.preds <- (predict(lm.forward.fit, newdata = myval))
+# print(paste("Val MSE: ", mean((lm.train.preds-myval$adjusted_price)^2)))
+
+autoplot(lm.forward.fit, which=1, nrow=1, ncol= 1)
+autoplot(lm.forward.fit, which=2, nrow=1, ncol= 1)
+autoplot(lm.forward.fit, which=3, nrow=1, ncol= 1)
+```
+
+
+Results from Ridge 
+
+Test MSE: 36978495.368
+
+```{r Ridge}
+
+
+ridge_pred<-predict(ridgeCV,s='lambda.min',newx=Xs_test_design)
+print(paste("Test MSE: " ,mean((ridge_pred-mytest$adjusted_price)^2)))
+
+
+
+# ridge_pred<-predict(ridgeCV,s='lambda.min',newx=Xs_val_design)
+# print(paste("Test MSE: " ,mean((ridge_pred-myval$adjusted_price)^2)))
+ 
+
+
+```
+
+
+Results from Decision Tree regressor, 
+
+Test MSE - 36318409.0511821
+
+I found very bad MSE on test data using decision tree regressor. The test MSE is far larger than training MSE. 
+```{r DT - reg}
+dt_pred_test<-predict(dt.allvars.fit,newdata=mytest)
+print (paste("TEST MSE: ", mean((dt_pred_test-mytest$adjusted_price)^2)))
+# 
+# dt_pred_val<-predict(dt.allvars.fit,s='lambda.min',newx=myval)
+# print (paste("VAL MSE: ", mean((dt_pred_test-myval$adjusted_price)^2)))
+```
+
+
+Results from ANN model
+
+Test MSE - 61934887.647
+```{r ANN}
+
+ann.test.preds <-predict(train_ann, scaled_mytest_design)
+print(paste("TEST MSE", mean((ann.test.preds-scaled_mytest$adjusted_price)^2)))
+
+
+```
+
+Results from KNN
+
+Test MSE - 39351310.513808
+```{r KNN}
+
+predictions <- predict(knn_model, newdata = mytest)
+mse <- mean((predictions - mytest$adjusted_price)^2)
+print(paste("Test MSE", mse))
+
+
+# predictions <- predict(knn_model, newdata = myval)
+# mse <- mean((predictions - myval$adjusted_price)^2)
+# print(paste("val MSE", mse))
+
+
+
+```
+
+
+
+# Report the prediction & Model Performance on Validation Data
+From the above analysis, I found out to be KNN is performing better and has provided least MSE on training data but on Test data MSE is comparatively higher than other models. 
+
+I saw that least test MSE is found to be on Decision Tree model with all variables which is 36318409.051. Which is little higher than linear models but linear models fails to validate assumptions.
+
+To conclude based on the train and test data MSEs, I decided that decision tree as our final model.
+
+To better understand the results, again I compared the Linear model, Decision Tree, and KNN models using validation data. Decision Tree model have resulted better results overall on the validation data. Which means Decision Tree can predict car price better on the new data points, which is reliable.
+```{r}
+# ## finalized model -- KNN at K = 5 I got least Rsquared value as 0.362
+
+
+lm.val.preds <- (predict(lm.allvars.fit, newdata = myval))
+print(paste("Validation MSE", mean((lm.val.preds-myval$adjusted_price)^2)))
+
+
+predictions <- predict(knn_model, newdata = myval)
+mse <- mean((predictions - myval$adjusted_price)^2)
+print(paste("val MSE", mse))
+
+
+dt_pred_test<-predict(dt.allvars.fit,newdata=myval)
+print (paste("TEST MSE: ", mean((dt_pred_test-myval$adjusted_price)^2)))
+
+```
+
+# Conclusion
+I have filter the data set by year by dropping the rows for the year > 2015. I converted the categorical variables with the dummy values for modeling. Created new features such as Luxury_Car, Fleet_Size, and mean_kilometers.
+
+From our modeling and analysis of the created model candidates, I have seen there performance using Mean Squared Error on different data sets. From this analysis, I can choose the better model performance characteristics as I tested on different data subsets. 
+
+From the analysis I found that decision tree out performed. I can be infer that the data contains many categorical variables which makes decision tree to better on this data.
+
+Best MSPE achieved is 36318409.051 using Decision Tree Regressor model.
+
+Nonetheless, This analysis not limited. I have more space to improve overall analysis. I can investigate data patterns on complete data set, use further data exploration techniques, hyper parameter tuning of models like variable transformation in linear models, increasing nodes and hidden layers for ANN, considering min-sample-split etc. for decision tree. These can be further implemented to see whether I can extract even more better model.
+
+
+
+
+
